@@ -31,6 +31,12 @@ class InventoryService {
     return await db.query('shopping_list', orderBy: 'item_name ASC');
   }
 
+  // Elimina un elemento dalla dispensa
+  static Future<void> deleteInventoryItem(int id) async {
+    final db = await DatabaseHelper.instance.database;
+    await db.delete('inventory', where: 'id = ?', whereArgs: [id]);
+  }
+
   // Aggiunge un articolo alla lista della spesa
   static Future<void> addShoppingItem(
     String itemName,
