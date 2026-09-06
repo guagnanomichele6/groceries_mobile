@@ -106,4 +106,42 @@ class FinanceService {
       });
     });
   }
+
+  static Future<void> deleteTransaction(int transactionId) async {
+    final db = await DatabaseHelper.instance.database;
+
+    await db.transaction((txn) async {
+      // 1. Recupera i dati della transazione prima di eliminarla
+      final List<Map<String, dynamic>> results = await txn.query(
+        'transactions',
+        where: 'id = ?',
+        whereArgs: [transactionId],
+      );
+
+      if (results.isNotEmpty) {
+        final tx = results.first;
+        int accountId = tx['account_id'];
+        double amount = tx['total_amount'];
+        double fee = tx['fee'] ?? 0.0;
+
+        // 2. Calcola l'impatto da stornare (inverte l'operazione fatta al momento dell'inserimento)
+        // Se total_amount era negativo (spesa), dobbiamo restituire l'importo e la fee al saldo.
+        // Se era positivo (entrata), dobbiamo sottrarre l'importo dal saldo.
+        double refundAmount = amount < 0 ? (-amount + fee) : (amount - fee);
+        String updateQuery = amount < 0
+            ? 'UPDATE accounts SET balance = balance + ? WHERE id = ?'
+            : 'UPDATE accounts SET balance = balance - ? WHERE id = ?';
+
+        // 3. Aggiorna il saldo del conto
+        await txn.rawUpdate(updateQuery, [refundAmount, accountId]);
+
+        // 4. Elimina la transazione
+        await txn.delete(
+          'transactions',
+          where: 'id = ?',
+          whereArgs: [transactionId],
+        );
+      }
+    });
+  }
 }

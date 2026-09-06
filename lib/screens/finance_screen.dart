@@ -11,6 +11,137 @@ class FinanceScreen extends StatefulWidget {
   State<FinanceScreen> createState() => _FinanceScreenState();
 }
 
+class _MonthlySummaryView extends StatefulWidget {
+  final List<Map<String, dynamic>> transactions;
+  final List<String> availableMonths;
+
+  const _MonthlySummaryView({
+    required this.transactions,
+    required this.availableMonths,
+  });
+
+  @override
+  State<_MonthlySummaryView> createState() => _MonthlySummaryViewState();
+}
+
+class _MonthlySummaryViewState extends State<_MonthlySummaryView> {
+  late String selectedMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedMonth = widget.availableMonths.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.transactions.where((tx) {
+      String m = tx['date'].toString().substring(0, 7);
+      String cat = tx['category'] ?? '';
+      return m == selectedMonth && cat != 'Giroconto';
+    }).toList();
+
+    Map<String, Map<String, double>> categoryCurrencyTotals = {};
+    double totalEurOverall = 0.0;
+
+    // Tasso di cambio indicativo o personalizzabile (es. 1 EUR = 160 JPY circa, o gestito a 0.00625)
+    double jpyToEurRate = 0.00625;
+
+    for (var tx in filtered) {
+      String cat = tx['category'];
+      String curr = tx['currency'] ?? 'EUR';
+      double amt = tx['total_amount'];
+      double val = amt < 0 ? -amt : amt;
+
+      categoryCurrencyTotals.putIfAbsent(cat, () => {});
+      categoryCurrencyTotals[cat]![curr] =
+          (categoryCurrencyTotals[cat]![curr] ?? 0.0) + val;
+
+      // Accumula nel totale in Euro
+      if (curr == 'JPY') {
+        totalEurOverall += val * jpyToEurRate;
+      } else {
+        totalEurOverall += val;
+      }
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Seleziona Mese: ',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(width: 12),
+              DropdownButton<String>(
+                value: selectedMonth,
+                items: widget.availableMonths
+                    .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                    .toList(),
+                onChanged: (val) => setState(() => selectedMonth = val!),
+              ),
+            ],
+          ),
+          const Divider(height: 24),
+          Text(
+            'Report per il mese di: $selectedMonth',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: categoryCurrencyTotals.isEmpty
+                ? const Center(
+                    child: Text('Nessuna spesa registrata per questo mese.'),
+                  )
+                : ListView(
+                    children: [
+                      ...categoryCurrencyTotals.entries.map((entry) {
+                        String category = entry.key;
+                        Map<String, double> currencies = entry.value;
+
+                        String totalsString = currencies.entries
+                            .map(
+                              (e) =>
+                                  '${e.key == 'JPY' ? '¥' : '€'} ${e.value.toStringAsFixed(2)}',
+                            )
+                            .join(' • ');
+
+                        return ListTile(
+                          title: Text(category),
+                          trailing: Text(
+                            totalsString,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        );
+                      }),
+                      const Divider(thickness: 2),
+                      ListTile(
+                        title: const Text(
+                          'Totale Complessivo (EUR)',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        trailing: Text(
+                          '€ ${totalEurOverall.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Colors.blue,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FinanceScreenState extends State<FinanceScreen>
     with SingleTickerProviderStateMixin {
   late TabController _subTabController;
@@ -20,7 +151,7 @@ class _FinanceScreenState extends State<FinanceScreen>
   @override
   void initState() {
     super.initState();
-    _subTabController = TabController(length: 4, vsync: this);
+    _subTabController = TabController(length: 6, vsync: this);
     _refreshData();
   }
 
@@ -120,6 +251,8 @@ class _FinanceScreenState extends State<FinanceScreen>
             Tab(text: 'Transazioni'),
             Tab(text: 'Giroconti'),
             Tab(text: 'Ricorrenti'),
+            Tab(text: 'Storico'),
+            Tab(text: 'Riepilogo'),
           ],
         ),
         actions: [
@@ -146,6 +279,8 @@ class _FinanceScreenState extends State<FinanceScreen>
               _buildTransactionsTab(accounts, transactions),
               _buildTransferTab(accounts),
               _buildRecurringTab(accounts),
+              _buildHistoryTab(transactions), // <-- Tab 5: Storico aggiunto
+              _buildSummaryTab(transactions), // <-- Tab 6: Riepilogo aggiunto
             ],
           );
         },
@@ -441,6 +576,102 @@ class _FinanceScreenState extends State<FinanceScreen>
           ],
         );
       },
+    );
+  }
+
+  // --- TAB 5: STORICO TRANSAZIONI ---
+  Widget _buildHistoryTab(List<Map<String, dynamic>> transactions) {
+    return transactions.isEmpty
+        ? const Center(
+            child: Text('Nessuna transazione registrata nello storico.'),
+          )
+        : ListView.builder(
+            padding: const EdgeInsets.all(8.0),
+            itemCount: transactions.length,
+            itemBuilder: (context, index) {
+              final tx = transactions[index];
+              double amount = tx['total_amount'];
+              double fee = tx['fee'] ?? 0.0;
+              bool isPositive = amount >= 0;
+
+              String subtitle =
+                  'Conto: ${tx['account_name'] ?? 'N/D'} • Data: ${tx['date']} • Categoria: ${tx['category']}';
+              if (fee > 0) subtitle += ' • Fee: ${fee.toStringAsFixed(2)}';
+
+              return Card(
+                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                child: ListTile(
+                  leading: Icon(
+                    isPositive ? Icons.arrow_downward : Icons.arrow_upward,
+                    color: isPositive ? Colors.green : Colors.red,
+                  ),
+                  title: Text(
+                    tx['description'].isEmpty
+                        ? tx['category']
+                        : tx['description'],
+                  ),
+                  subtitle: Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${isPositive ? '+' : ''}${amount.toStringAsFixed(2)} ${tx['currency'] ?? 'EUR'}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: isPositive ? Colors.green : Colors.red,
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.red,
+                          size: 20,
+                        ),
+                        tooltip: 'Elimina e storna saldo',
+                        onPressed: () async {
+                          // Esegue l'eliminazione con storno del saldo
+                          await FinanceService.deleteTransaction(tx['id']);
+                          _refreshData();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'Transazione eliminata e saldo stornato.',
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+  }
+
+  // --- TAB 6: RIEPILOGO MENSILE ---
+  Widget _buildSummaryTab(List<Map<String, dynamic>> transactions) {
+    if (transactions.isEmpty) {
+      const Center(child: Text('Nessun dato disponibile per il riepilogo.'));
+    }
+
+    // Estrae i mesi unici dalle transazioni (formato YYYY-MM)
+    List<String> months = transactions
+        .map((tx) => tx['date'].toString().substring(0, 7))
+        .toSet()
+        .toList();
+    months.sort((a, b) => b.compareTo(a)); // Ordine discendente
+
+    if (months.isEmpty) {
+      return const Center(child: Text('Nessun mese registrato.'));
+    }
+
+    return _MonthlySummaryView(
+      transactions: transactions,
+      availableMonths: months,
     );
   }
 
