@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:flutter/services.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -10,8 +9,28 @@ class DatabaseHelper {
 
   DatabaseHelper._init();
 
+  // Metodo per sostituire/aggiornare il database (es. importato da PC)
+  Future<void> replaceDatabase(String newFilePath) async {
+    var databasesPath = await getDatabasesPath();
+    String path = join(databasesPath, 'finance_food.db');
+
+    // 1. Chiudi la connessione attiva se esiste
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
+
+    // 2. Copia il nuovo file sovrascrivendo quello vecchio nei Documents
+    File sourceFile = File(newFilePath);
+    await sourceFile.copy(path);
+  }
+
   Future<Database> get database async {
-    if (_database != null) return _database!;
+    // Se c'è già una connessione aperta, la chiudiamo per forzare la rilettura dal disco
+    if (_database != null) {
+      await _database!.close();
+      _database = null;
+    }
     _database = await _initDB('finance_food.db');
     return _database!;
   }
@@ -20,11 +39,7 @@ class DatabaseHelper {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
-    print("📍 PERCORSO ESATTO DEL DB: $path"); // <--- Aggiungi questa riga
-
-    // ATTENZIONE: Durante lo sviluppo, se vuoi forzare la ricarica
-    // del DB dagli asset a ogni avvio, decommenta la riga sotto:
-    await deleteDatabase(path);
+    print("📍 PERCORSO ESATTO DEL DB: $path");
 
     bool exists = await databaseExists(path);
 
@@ -33,18 +48,11 @@ class DatabaseHelper {
         await Directory(dirname(path)).create(recursive: true);
       } catch (_) {}
 
-      try {
-        ByteData data = await rootBundle.load('assets/finance_food.db');
-        List<int> bytes = data.buffer.asUint8List(
-          data.offsetInBytes,
-          data.lengthInBytes,
-        );
-        await File(path).writeAsBytes(bytes, flush: true);
-      } catch (e) {
-        return await _createDB(path);
-      }
+      // Se il database non esiste nei Documents, lo crea da zero con tutte le tabelle
+      return await _createDB(path);
     }
 
+    // Se esiste già, lo apre normalmente (rileggendo le modifiche o il file sostituito)
     return await openDatabase(path);
   }
 
@@ -53,7 +61,7 @@ class DatabaseHelper {
       path,
       version: 1,
       onCreate: (db, version) async {
-        // Tabelle standard del tuo ERP
+        // Tabelle standard complete del tuo ERP
         await db.execute('''
           CREATE TABLE accounts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
